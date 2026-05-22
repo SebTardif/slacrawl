@@ -92,6 +92,12 @@ func (a *App) Run(ctx context.Context, args []string) error {
 	a.setColorEnabled(outputFormat, global.NoColor)
 
 	switch rest[0] {
+	case "metadata":
+		metadataFormat, err := metadataOutputFormat(rest[1:], outputFormat)
+		if err != nil {
+			return err
+		}
+		return a.writeOutput("Metadata", controlManifest(configPath), metadataFormat, false)
 	case "init":
 		return a.runInit(configPath, rest[1:], outputFormat)
 	case "doctor":

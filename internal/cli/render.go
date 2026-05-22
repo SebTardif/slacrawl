@@ -73,6 +73,7 @@ func (a *App) printHelp() {
 	b.WriteString("  --no-color        Disable ANSI color in text output.\n\n")
 	b.WriteString(colorize(ansiCyan, "Commands:"))
 	b.WriteByte('\n')
+	b.WriteString("  metadata  Print crawlkit control metadata.\n")
 	b.WriteString("  init       Create a starter config.\n")
 	b.WriteString("  doctor     Check config, DB, tokens, and desktop coverage.\n")
 	b.WriteString("  report     Show archive activity and share freshness.\n")

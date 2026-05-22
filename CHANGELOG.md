@@ -1,6 +1,11 @@
 # Changelog
 
-## 0.6.1 - Unreleased
+## 0.6.2 - Unreleased
+
+### Changes
+
+- Added `metadata --json` crawlkit control metadata for schedulers and local automation.
+- Added the crawlkit dependency for shared control metadata.
 
 ### Fixes
 
