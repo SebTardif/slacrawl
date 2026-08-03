@@ -29,7 +29,14 @@ import (
 const (
 	SourceUser = "api-user"
 	SourceBot  = "api-bot"
+
+	// defaultHTTPTimeout bounds Slack API HTTP when NewWithOptions gets a nil client.
+	defaultHTTPTimeout = 60 * time.Second
 )
+
+func defaultHTTPClient() *http.Client {
+	return &http.Client{Timeout: defaultHTTPTimeout}
+}
 
 type Diagnostics struct {
 	BotConfigured     bool   `json:"bot_configured"`
@@ -76,11 +83,14 @@ func New(tokens config.Tokens) *Client {
 }
 
 func NewWithOptions(tokens config.Tokens, apiURL string, httpClient *http.Client) *Client {
+	if httpClient == nil {
+		httpClient = defaultHTTPClient()
+	}
 	client := &Client{
 		tokens:     tokens,
 		appToken:   tokens.App,
 		apiURL:     slack.APIURL,
-		httpClient: http.DefaultClient,
+		httpClient: httpClient,
 		includeDMs: tokens.User != "",
 		sleep:      sleepContext,
 		now:        func() time.Time { return time.Now().UTC() },
@@ -88,18 +98,13 @@ func NewWithOptions(tokens config.Tokens, apiURL string, httpClient *http.Client
 	if apiURL != "" {
 		client.apiURL = apiURL
 	}
-	if httpClient != nil {
-		client.httpClient = httpClient
-	}
 
 	buildOptions := func(includeAppToken bool) []slack.Option {
 		var options []slack.Option
 		if apiURL != "" {
 			options = append(options, slack.OptionAPIURL(apiURL))
 		}
-		if httpClient != nil {
-			options = append(options, slack.OptionHTTPClient(httpClient))
-		}
+		options = append(options, slack.OptionHTTPClient(httpClient))
 		if includeAppToken && tokens.App != "" {
 			options = append(options, slack.OptionAppLevelToken(tokens.App))
 		}

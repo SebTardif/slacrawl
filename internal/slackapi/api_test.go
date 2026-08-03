@@ -1695,3 +1695,23 @@ func testProgressLogger(out *bytes.Buffer) *slog.Logger {
 		},
 	}))
 }
+
+func TestNewWithOptionsDefaultsTimedHTTPClient(t *testing.T) {
+	client := NewWithOptions(config.Tokens{Bot: "xoxb-test"}, "", nil)
+	if client.httpClient == nil {
+		t.Fatal("httpClient is nil")
+	}
+	if client.httpClient == http.DefaultClient {
+		t.Fatal("httpClient must not be http.DefaultClient")
+	}
+	if client.httpClient.Timeout != defaultHTTPTimeout {
+		t.Fatalf("httpClient.Timeout = %s, want %s", client.httpClient.Timeout, defaultHTTPTimeout)
+	}
+}
+
+func TestNewUsesDefaultHTTPClient(t *testing.T) {
+	client := New(config.Tokens{Bot: "xoxb-test"})
+	if client.httpClient.Timeout != defaultHTTPTimeout {
+		t.Fatalf("New() httpClient.Timeout = %s, want %s", client.httpClient.Timeout, defaultHTTPTimeout)
+	}
+}
