@@ -6,6 +6,10 @@
 
 - Rewrote the README around installation and a verified quick start, with detailed command and Git archive references moved to `docs/`.
 
+### Maintenance
+
+- Updated CrawlKit to 0.14.5 and refreshed go-colorful to 1.4.1.
+
 ## v0.8.0 - 2026-08-02
 
 ### Changes
