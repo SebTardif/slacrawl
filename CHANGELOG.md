@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- Use a 60-second default HTTP client when none is injected so stalled Slack API peers cannot hang the CLI forever. Thanks @SebTardif.
+
 ### Documentation
 
 - Rewrote the README around installation and a verified quick start, with detailed command and Git archive references moved to `docs/`.
