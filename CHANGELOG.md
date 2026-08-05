@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- Added a 60-second default Slack API timeout so stalled requests cannot hang the CLI indefinitely. Thanks @SebTardif.
+
 ### Documentation
 
 - Rewrote the README around installation and a verified quick start, with detailed command and Git archive references moved to `docs/`.
