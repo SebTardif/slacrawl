@@ -37,8 +37,6 @@ const (
 
 var ErrNoManifest = errors.New("share manifest not found")
 
-var errUnsafeMediaPath = errors.New("unsafe media path")
-
 var maxShardBytes = defaultMaxShardBytes
 
 var SnapshotTables = []string{
@@ -287,7 +285,7 @@ func importLocked(ctx context.Context, s *store.Store, opts Options, restore boo
 			return Manifest{}, fmt.Errorf("manifest table %s row count mismatch: imported %d, expected %d", table.Name, rows, table.Rows)
 		}
 	}
-	if err := backfillDeletedMessageSubordinates(ctx, tx); err != nil {
+	if err := store.BackfillDeletedSubordinates(ctx, tx); err != nil {
 		return Manifest{}, err
 	}
 	if err := rebuildMessageFTS(ctx, tx); err != nil {
@@ -345,53 +343,6 @@ select m.channel_id || '|' || m.ts,
 from messages m;
 `); err != nil {
 		return fmt.Errorf("rebuild message_fts: %w", err)
-	}
-	return nil
-}
-
-func backfillDeletedMessageSubordinates(ctx context.Context, tx *sql.Tx) error {
-	if _, err := tx.ExecContext(ctx, `
-update message_files
-set deleted_at = coalesce(nullif(deleted_at, ''), (
-      select m.updated_at from messages m
-      where m.channel_id = message_files.channel_id and m.ts = message_files.ts
-    )),
-    deletion_source = coalesce(nullif(deletion_source, ''), (
-      select m.source_name from messages m
-      where m.channel_id = message_files.channel_id and m.ts = message_files.ts
-    )),
-    deletion_reason = coalesce(nullif(deletion_reason, ''), 'parent_message_deleted'),
-    updated_at = coalesce((
-      select m.updated_at from messages m
-      where m.channel_id = message_files.channel_id and m.ts = message_files.ts
-    ), updated_at)
-where exists (
-  select 1 from messages m
-  where m.channel_id = message_files.channel_id and m.ts = message_files.ts
-    and trim(coalesce(m.deleted_ts, '')) <> ''
-);
-
-update message_mentions
-set deleted_at = coalesce(nullif(deleted_at, ''), (
-      select m.updated_at from messages m
-      where m.channel_id = message_mentions.channel_id and m.ts = message_mentions.ts
-    )),
-    deletion_source = coalesce(nullif(deletion_source, ''), (
-      select m.source_name from messages m
-      where m.channel_id = message_mentions.channel_id and m.ts = message_mentions.ts
-    )),
-    deletion_reason = coalesce(nullif(deletion_reason, ''), 'parent_message_deleted'),
-    updated_at = coalesce((
-      select m.updated_at from messages m
-      where m.channel_id = message_mentions.channel_id and m.ts = message_mentions.ts
-    ), updated_at)
-where exists (
-  select 1 from messages m
-  where m.channel_id = message_mentions.channel_id and m.ts = message_mentions.ts
-    and trim(coalesce(m.deleted_ts, '')) <> ''
-);
-`); err != nil {
-		return fmt.Errorf("backfill deleted message subordinates: %w", err)
 	}
 	return nil
 }
@@ -1046,14 +997,13 @@ order by f.media_path, f.channel_id, f.ts, f.file_id
 			manifest.Files++
 			continue
 		}
-		source, err := media.LocalPath(opts.CacheDir, mediaPath)
-		if err != nil {
-			return nil, err
-		}
-		info, err := regularMediaFile(filepath.Join(opts.CacheDir, "media"), source, mediaPath)
-		if errors.Is(err, os.ErrNotExist) || errors.Is(err, errUnsafeMediaPath) {
+		source, info, err := media.VerifiedFile(opts.CacheDir, mediaPath)
+		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
+		// An unsafe path is a broken cache, not an absent file. Skipping it
+		// silently let publish emit a manifest claiming the archive has no
+		// media at all, which wipes attachments for every subscriber.
 		if err != nil {
 			return nil, fmt.Errorf("stat media %s: %w", mediaPath, err)
 		}
@@ -1103,11 +1053,8 @@ func importMedia(ctx context.Context, opts Options, manifest *MediaManifest) (in
 		if !ok || strings.TrimSpace(mediaPath) == "" {
 			return copied, fmt.Errorf("invalid media manifest path %q", item.Path)
 		}
-		source, err := media.RepoPath(opts.RepoPath, mediaPath)
+		source, _, err := media.VerifiedFile(opts.RepoPath, mediaPath)
 		if err != nil {
-			return copied, err
-		}
-		if _, err := regularMediaFile(filepath.Join(opts.RepoPath, "media"), source, item.Path); err != nil {
 			return copied, err
 		}
 		hash, err := fileSHA256(source)
@@ -1278,11 +1225,14 @@ where channel_id = ? and ts = ? and file_id = ?
 select coalesce(media_path, '') from message_files
 where channel_id = ? and ts = ? and file_id = ?
 `, channelID, ts, fileID).Scan(&mediaPath)
-		if errors.Is(err, sql.ErrNoRows) || mediaPath == "" {
+		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
 		if err != nil {
 			return err
+		}
+		if mediaPath == "" {
+			continue
 		}
 		if _, ok := manifested[mediaPath]; ok {
 			continue
@@ -1337,45 +1287,6 @@ func nullableString(value string) any {
 		return nil
 	}
 	return value
-}
-
-func regularMediaFile(root, path, label string) (os.FileInfo, error) {
-	root = filepath.Clean(root)
-	path = filepath.Clean(path)
-	if path != root && !strings.HasPrefix(path, root+string(filepath.Separator)) {
-		return nil, fmt.Errorf("%w: media %s escapes media root", errUnsafeMediaPath, label)
-	}
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		return nil, err
-	}
-	if rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
-		return nil, fmt.Errorf("%w: invalid media path %q", errUnsafeMediaPath, label)
-	}
-	current := root
-	if info, err := os.Lstat(current); err == nil && !info.IsDir() {
-		return nil, fmt.Errorf("%w: media root for %s is not a directory", errUnsafeMediaPath, label)
-	}
-	for _, part := range strings.Split(rel, string(filepath.Separator)) {
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if err != nil {
-			return nil, err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("%w: media %s contains symlinked path component", errUnsafeMediaPath, label)
-		}
-		if current == path {
-			if !info.Mode().IsRegular() {
-				return nil, fmt.Errorf("%w: media %s is not a regular file", errUnsafeMediaPath, label)
-			}
-			return info, nil
-		}
-		if !info.IsDir() {
-			return nil, fmt.Errorf("%w: media %s parent is not a directory", errUnsafeMediaPath, label)
-		}
-	}
-	return nil, fmt.Errorf("%w: invalid media path %q", errUnsafeMediaPath, label)
 }
 
 func copyFile(dst, src string) error {

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unicode"
@@ -20,7 +21,7 @@ import (
 	"github.com/openclaw/slacrawl/internal/store/storedb"
 )
 
-const schemaVersion = 6
+const schemaVersion = 7
 const PlaceholderUserRawJSON = `{"slacrawl_provider_placeholder":true}`
 
 const (
@@ -28,12 +29,6 @@ const (
 	searchIndexMaintenanceEntityType = "search_index"
 	searchIndexMaintenanceEntityID   = "rowid_rebuild_pending"
 )
-
-const schemaPragmas = `
-pragma foreign_keys = on;
-pragma journal_mode = wal;
-pragma busy_timeout = 5000;
-`
 
 const messageEventHeadsTableSchema = `
 create table if not exists message_event_heads (
@@ -136,6 +131,7 @@ create index if not exists idx_messages_workspace_ts on messages(workspace_id, t
 create index if not exists idx_messages_workspace_channel_ts on messages(workspace_id, channel_id, ts desc);
 create index if not exists idx_messages_workspace_user_ts on messages(workspace_id, user_id, ts desc);
 create index if not exists idx_messages_key_expr on messages((channel_id || '|' || ts));
+create index if not exists idx_messages_channel_thread on messages(channel_id, thread_ts);
 
 create table if not exists message_files (
   workspace_id text not null,
@@ -186,6 +182,8 @@ create table if not exists message_events (
 );
 create unique index if not exists idx_message_events_identity
 on message_events(event_key);
+create index if not exists idx_message_events_channel_ts
+on message_events(channel_id, ts);
 ` + messageEventHeadsSchema + `
 create table if not exists sync_state (
   source_name text not null,
@@ -269,6 +267,16 @@ create index if not exists idx_message_files_name on message_files(name);
 
 const schemaV4Migration = messageEventHeadsSchema
 const schemaV5Migration = messageEventHeadTriggerSchema
+
+// schemaV7Migration adds the thread-lookup and event-lookup indexes. Without
+// (channel_id, thread_ts), ChannelThreadRoots' reply-existence probe scans the
+// whole channel per message — O(channel²), measured minutes-to-hours on large
+// channels; with it the same query is milliseconds.
+const schemaV7Migration = `
+create index if not exists idx_messages_channel_thread on messages(channel_id, thread_ts);
+create index if not exists idx_message_events_channel_ts on message_events(channel_id, ts);
+`
+
 const schemaV6EventMigration = `
 drop index if exists idx_message_events_identity;
 create table message_events_v6 (
@@ -1358,7 +1366,7 @@ func upsertMessageInTransaction(ctx context.Context, dbtx storedb.DBTX, qtx *sto
 		return false, err
 	}
 
-	filesForSearch := message.Files
+	var filesForSearch []MessageFile
 	if message.Files != nil {
 		existingMedia, err := existingFileMedia(ctx, qtx, message.ChannelID, message.TS)
 		if err != nil {
@@ -2266,11 +2274,30 @@ func replaceUserMentions(value string, mentions []messageMentionDisplay) string 
 		if !strings.HasPrefix(display, "@") {
 			display = "@" + display
 		}
-		value = regexp.MustCompile(`<@`+regexp.QuoteMeta(target)+`(?:\|[^>]+)?>`).ReplaceAllString(value, display)
+		value = mentionTokenRegexp(target).ReplaceAllString(value, display)
 		value = strings.ReplaceAll(value, "@"+target, display)
 		value = strings.ReplaceAll(value, "@"+strings.ToLower(target), display)
 	}
 	return value
+}
+
+// mentionTokenRegexps caches per-target regexps: replaceUserMentions runs once
+// per rendered row times its mentions, and recompiling the same target pattern
+// dominated large listing renders. Target IDs are a small, stable set.
+var (
+	mentionTokenRegexpsMu sync.Mutex
+	mentionTokenRegexps   = map[string]*regexp.Regexp{}
+)
+
+func mentionTokenRegexp(target string) *regexp.Regexp {
+	mentionTokenRegexpsMu.Lock()
+	defer mentionTokenRegexpsMu.Unlock()
+	if re, ok := mentionTokenRegexps[target]; ok {
+		return re
+	}
+	re := regexp.MustCompile(`<@` + regexp.QuoteMeta(target) + `(?:\|[^>]+)?>`)
+	mentionTokenRegexps[target] = re
+	return re
 }
 
 func (s *Store) Mentions(ctx context.Context, workspaceID string, target string, limit int) ([]MentionRow, error) {
@@ -2827,6 +2854,64 @@ func RebuildSearchIndexesInTransaction(ctx context.Context, tx *sql.Tx) error {
 	return rebuildSearchIndexesInTransaction(ctx, tx)
 }
 
+// BackfillDeletedSubordinates stamps deletion metadata onto message_files and
+// message_mentions whose parent message carries a deleted_ts. It preserves any
+// deletion_reason already recorded — the parent tombstone explains missing
+// subordinates, it does not override a more specific reason. This is the single
+// owner of the tombstone-propagation SQL; the v6 migration and the share import
+// path both call it so the invariant cannot drift between them again.
+func BackfillDeletedSubordinates(ctx context.Context, tx *sql.Tx) error {
+	if tx == nil {
+		return errors.New("tombstone backfill transaction is required")
+	}
+	if _, err := tx.ExecContext(ctx, backfillDeletedSubordinatesSQL); err != nil {
+		return fmt.Errorf("backfill deleted message subordinates: %w", err)
+	}
+	return nil
+}
+
+const backfillDeletedSubordinatesSQL = `
+update message_files
+set deleted_at = coalesce(nullif(deleted_at, ''), (
+      select m.updated_at from messages m
+      where m.channel_id = message_files.channel_id and m.ts = message_files.ts
+    )),
+    deletion_source = coalesce(nullif(deletion_source, ''), (
+      select m.source_name from messages m
+      where m.channel_id = message_files.channel_id and m.ts = message_files.ts
+    )),
+    deletion_reason = coalesce(nullif(deletion_reason, ''), 'parent_message_deleted'),
+    updated_at = coalesce((
+      select m.updated_at from messages m
+      where m.channel_id = message_files.channel_id and m.ts = message_files.ts
+    ), updated_at)
+where exists (
+  select 1 from messages m
+  where m.channel_id = message_files.channel_id and m.ts = message_files.ts
+    and trim(coalesce(m.deleted_ts, '')) <> ''
+);
+
+update message_mentions
+set deleted_at = coalesce(nullif(deleted_at, ''), (
+      select m.updated_at from messages m
+      where m.channel_id = message_mentions.channel_id and m.ts = message_mentions.ts
+    )),
+    deletion_source = coalesce(nullif(deletion_source, ''), (
+      select m.source_name from messages m
+      where m.channel_id = message_mentions.channel_id and m.ts = message_mentions.ts
+    )),
+    deletion_reason = coalesce(nullif(deletion_reason, ''), 'parent_message_deleted'),
+    updated_at = coalesce((
+      select m.updated_at from messages m
+      where m.channel_id = message_mentions.channel_id and m.ts = message_mentions.ts
+    ), updated_at)
+where exists (
+  select 1 from messages m
+  where m.channel_id = message_mentions.channel_id and m.ts = message_mentions.ts
+    and trim(coalesce(m.deleted_ts, '')) <> ''
+);
+`
+
 func markSearchIndexRebuildPending(ctx context.Context, dbtx storedb.DBTX) error {
 	return storedb.New(dbtx).SetSyncState(ctx, storedb.SetSyncStateParams{
 		SourceName: searchIndexMaintenanceSource, EntityType: searchIndexMaintenanceEntityType,
@@ -3116,6 +3201,12 @@ func migrateSchema(db *sql.DB, currentVersion int) error {
 		}
 		currentVersion = 6
 	}
+	if currentVersion < 7 {
+		if _, err := tx.Exec(schemaV7Migration); err != nil {
+			return fmt.Errorf("migrate sqlite schema to v7: %w", err)
+		}
+		currentVersion = 7
+	}
 	if currentVersion != schemaVersion {
 		return fmt.Errorf("no migration path from sqlite schema version %d to %d", currentVersion, schemaVersion)
 	}
@@ -3220,48 +3311,10 @@ set updated_at = coalesce((
   where m.channel_id = message_mentions.channel_id and m.ts = message_mentions.ts
 ), '')
 where updated_at = '';
-
-update message_files
-set deleted_at = coalesce(nullif(deleted_at, ''), (
-      select m.updated_at from messages m
-      where m.channel_id = message_files.channel_id and m.ts = message_files.ts
-    )),
-    deletion_source = coalesce(nullif(deletion_source, ''), (
-      select m.source_name from messages m
-      where m.channel_id = message_files.channel_id and m.ts = message_files.ts
-    )),
-    deletion_reason = 'parent_message_deleted',
-    updated_at = coalesce((
-      select m.updated_at from messages m
-      where m.channel_id = message_files.channel_id and m.ts = message_files.ts
-    ), updated_at)
-where exists (
-  select 1 from messages m
-  where m.channel_id = message_files.channel_id and m.ts = message_files.ts
-    and trim(coalesce(m.deleted_ts, '')) <> ''
-);
-
-update message_mentions
-set deleted_at = coalesce(nullif(deleted_at, ''), (
-      select m.updated_at from messages m
-      where m.channel_id = message_mentions.channel_id and m.ts = message_mentions.ts
-    )),
-    deletion_source = coalesce(nullif(deletion_source, ''), (
-      select m.source_name from messages m
-      where m.channel_id = message_mentions.channel_id and m.ts = message_mentions.ts
-    )),
-    deletion_reason = 'parent_message_deleted',
-    updated_at = coalesce((
-      select m.updated_at from messages m
-      where m.channel_id = message_mentions.channel_id and m.ts = message_mentions.ts
-    ), updated_at)
-where exists (
-  select 1 from messages m
-  where m.channel_id = message_mentions.channel_id and m.ts = message_mentions.ts
-    and trim(coalesce(m.deleted_ts, '')) <> ''
-);
-
 `); err != nil {
+		return err
+	}
+	if err := BackfillDeletedSubordinates(context.Background(), tx); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`delete from message_fts;` + rebuildMessageFTSRowsSQL + `;

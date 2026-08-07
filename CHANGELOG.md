@@ -5,6 +5,23 @@
 ### Fixes
 
 - Slack Connect shared channels no longer abort workspace syncs: when a channel already belongs to another workspace in the archive, the bot sync skips it with a warning and keeps syncing the remaining channels instead of failing the whole run.
+- Cross-workspace collisions are now skipped for users and messages too, not just channels: an Enterprise Grid user shared between workspaces no longer aborts the sync after every message has already committed, and a shared-channel message no longer terminates `slacrawl tail`.
+- `files fetch` no longer discards every attachment when `--max-bytes`/`sync.max_file_bytes` is set to the maximum int64 value: the over-limit probe used to overflow negative and record each file as a fetched empty file.
+- `purge` and `publish` now work with a media cache whose root is a symlink, a common setup for large attachment caches on a separate volume. The fetch path always wrote through such a symlink while every read path rejected it, so cleanup failed permanently; symlinks inside the cache tree are still refused.
+- `publish` now fails loudly on an unreadable media cache instead of emitting a manifest that claims the archive has no attachments, which silently wiped media for subscribers on their next import.
+- `search` and `messages` no longer emit invalid UTF-8 when a message containing emoji or CJK is truncated, and wide characters now count as their display width rather than their byte length.
+- Table output stays aligned when cells are empty, `null`, boolean, or non-ASCII; column widths were measured on the ANSI-colorized bytes.
+- Cached attachments with fully non-Latin filenames keep their extension, so a published `media/` tree serves them with the right content type.
+- Messages that merely quote mention syntax (`&lt;@U…&gt;` in escaped form) are no longer recorded as real mentions in the archive or the `mentions` command.
+- Ctrl-C and SIGTERM now cancel long-running commands cleanly instead of hard-killing the process mid-sync.
+- `slacrawl tail` survives transient network failures during its periodic repair sweep instead of exiting, its websocket now honors cancellation, and a failing workspace reports its real error instead of an occasional bare `context canceled`.
+- `sync --since` accepts RFC3339 timestamps on every backend as documented; previously only the MCP source normalized them and junk values were passed through silently.
+- `analytics trends --weeks` rejects absurd values that previously attempted multi-gigabyte allocations.
+- MCP stdio responses written just before server exit are no longer occasionally reported as decode errors, and provider subprocesses that die at startup now surface their stderr instead of a bare broken-pipe error.
+
+### Performance
+
+- Thread synchronization no longer scans whole channels per message: a new schema v7 index makes the thread-root lookup O(log n); a 50k-message channel dropped from minutes to milliseconds. Message-event deletes and rendered mention replacement also stopped doing redundant work.
 
 ## v0.8.1 - 2026-08-02
 
