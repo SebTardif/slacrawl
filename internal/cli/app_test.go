@@ -1017,6 +1017,44 @@ func TestPublishSubscribeAndSearchGitArchive(t *testing.T) {
 	require.Equal(t, true, update["restore"])
 }
 
+func TestReadCommandsDoNotChangeLocalArchivePermissions(t *testing.T) {
+	commands := map[string][]string{
+		"analytics quiet":  {"analytics", "quiet"},
+		"analytics trends": {"analytics", "trends"},
+		"channels":         {"channels"},
+		"digest":           {"digest"},
+		"files":            {"files"},
+		"mentions":         {"mentions"},
+		"messages":         {"messages"},
+		"report":           {"report"},
+		"search":           {"search", "archive"},
+		"sql":              {"sql", "select 1"},
+		"users":            {"users"},
+	}
+
+	for name, command := range commands {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "config.toml")
+			dbPath := filepath.Join(dir, "slacrawl.db")
+			cfg := config.Default()
+			cfg.DBPath = dbPath
+			require.NoError(t, cfg.Save(configPath))
+			seedArchiveStore(t, dbPath, "read-only archive")
+			require.NoError(t, os.Chmod(dbPath, 0o444))
+
+			args := append([]string{"--config", configPath, "--json"}, command...)
+			var stdout bytes.Buffer
+			app := &App{Stdout: &stdout, Stderr: &stdout}
+			require.NoError(t, app.Run(context.Background(), args))
+
+			info, err := os.Stat(dbPath)
+			require.NoError(t, err)
+			require.Equal(t, os.FileMode(0o444), info.Mode().Perm())
+		})
+	}
+}
+
 func TestSubscribePersistsNoMedia(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()

@@ -1019,7 +1019,7 @@ func (a *App) runFilesFetch(ctx context.Context, configPath string, args []strin
 	if *maxBytes <= 0 {
 		return errors.New("--max-bytes must be positive")
 	}
-	st, err := a.openReadableStore(ctx, cfg)
+	st, err := a.openAutoUpdatingStore(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -1330,7 +1330,7 @@ func (a *App) runTail(ctx context.Context, configPath string, args []string) err
 	if configErr != nil {
 		return configErr
 	}
-	st, err := a.openReadableStore(ctx, cfg)
+	st, err := a.openAutoUpdatingStore(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -2136,7 +2136,7 @@ func (a *App) openStore(cfg config.Config) (*store.Store, error) {
 	return store.Open(cfg.DBPath)
 }
 
-func (a *App) openReadableStore(ctx context.Context, cfg config.Config) (*store.Store, error) {
+func (a *App) openAutoUpdatingStore(ctx context.Context, cfg config.Config) (*store.Store, error) {
 	st, err := a.openStore(cfg)
 	if err != nil {
 		return nil, err
@@ -2146,6 +2146,27 @@ func (a *App) openReadableStore(ctx context.Context, cfg config.Config) (*store.
 		return nil, err
 	}
 	return st, nil
+}
+
+// openReadableStore preserves automatic share imports when configured, but keeps
+// ordinary local archive queries from changing database state or permissions.
+func (a *App) openReadableStore(ctx context.Context, cfg config.Config) (*store.Store, error) {
+	if cfg.ShareEnabled() && cfg.Share.AutoUpdate {
+		st, err := a.openAutoUpdatingStore(ctx, cfg)
+		if err != nil {
+			return nil, err
+		}
+		if err := st.Close(); err != nil {
+			return nil, fmt.Errorf("close store after automatic share update: %w", err)
+		}
+		return store.OpenReadOnly(cfg.DBPath)
+	}
+	if _, err := os.Stat(cfg.DBPath); errors.Is(err, os.ErrNotExist) {
+		return a.openStore(cfg)
+	} else if err != nil {
+		return nil, err
+	}
+	return store.OpenReadOnly(cfg.DBPath)
 }
 
 func (a *App) autoUpdateShare(ctx context.Context, cfg config.Config, st *store.Store) error {
