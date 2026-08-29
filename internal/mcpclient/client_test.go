@@ -143,6 +143,60 @@ func TestStdioClientUsesMinimalEnvironment(t *testing.T) {
 	require.JSONEq(t, `{"allowed":"visible","secret":""}`, text)
 }
 
+func TestNewStdioRejectsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	client, err := NewStdio(ctx, StdioOptions{Command: "/bin/sleep", Args: []string{"30"}})
+	if client != nil {
+		_ = client.Close()
+	}
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, client)
+}
+
+func TestNewStdioStopsChildWhenContextCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	client, err := NewStdio(ctx, StdioOptions{Command: "/bin/sleep", Args: []string{"30"}})
+	require.NoError(t, err)
+	cancel()
+	select {
+	case <-client.waitCh:
+		_ = client.stdin.Close()
+	case <-time.After(5 * time.Second):
+		_ = client.Close()
+		t.Fatal("MCP stdio child still running after spawn context cancel")
+	}
+}
+
+func TestStdioWriteUnblocksWhenContextCanceled(t *testing.T) {
+	client, err := NewStdio(context.Background(), StdioOptions{Command: "/bin/sleep", Args: []string{"30"}})
+	require.NoError(t, err)
+	defer func() { _ = client.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- client.write(ctx, map[string]any{
+			"jsonrpc": "2.0",
+			"method":  "initialize",
+			"params":  map[string]any{"blob": strings.Repeat("x", 2<<20)},
+		})
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("write returned before cancel: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		t.Fatal("write stayed blocked after context cancel")
+	}
+}
+
 func TestMCPStdioHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_MCP_STDIO_HELPER") != "1" {
 		return
