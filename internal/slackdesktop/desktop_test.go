@@ -401,7 +401,7 @@ fs.writeFileSync(process.argv[1], v8.serialize(value));
 	blobPayload := append([]byte{0xff, 0x11, 0x02}, snappy.Encode(nil, serialized)...)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "IndexedDB", "https_app.slack.com_0.indexeddb.blob", "1", "cd", "cd9a"), blobPayload, 0o600))
 
-	states, err := ExtractIndexedDBStates(root)
+	states, err := ExtractIndexedDBStates(context.Background(), root)
 	require.NoError(t, err)
 	require.Len(t, states, 1)
 	require.Equal(t, "T111", states[0].WorkspaceID)
@@ -1038,7 +1038,7 @@ func TestInspectIncludesSnapshotDerivedDesktopSummaries(t *testing.T) {
 	require.NoError(t, indexDB.Put([]byte("https_app.slack.com_0@1#objectStore-T111-U111"), []byte("A"), nil))
 	require.NoError(t, indexDB.Close())
 
-	source, err := Inspect(root)
+	source, err := Inspect(context.Background(), root)
 	require.NoError(t, err)
 	require.True(t, source.Available)
 	require.Equal(t, 1, source.Local.WorkspaceCount)
