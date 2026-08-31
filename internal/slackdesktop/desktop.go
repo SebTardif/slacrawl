@@ -254,7 +254,7 @@ func Discover(path string) (Source, error) {
 	return source, nil
 }
 
-func Inspect(path string) (Source, error) {
+func Inspect(ctx context.Context, path string) (Source, error) {
 	source, err := Discover(path)
 	if err != nil {
 		return Source{}, err
@@ -269,7 +269,7 @@ func Inspect(path string) (Source, error) {
 	}
 	defer func() { _ = os.RemoveAll(filepath.Dir(snapshot.Root)) }()
 
-	extracted, err := Extract(snapshot.Root)
+	extracted, err := Extract(ctx, snapshot.Root)
 	if err != nil {
 		return Source{}, err
 	}
@@ -329,7 +329,7 @@ func SnapshotPath(path string) (snapshot Snapshot, err error) {
 	return Snapshot{Root: target}, nil
 }
 
-func Extract(path string) (ExtractedData, error) {
+func Extract(ctx context.Context, path string) (ExtractedData, error) {
 	root, err := LoadRootState(filepath.Join(path, rootStateFile))
 	if err != nil && !os.IsNotExist(err) {
 		return ExtractedData{}, err
@@ -344,7 +344,7 @@ func Extract(path string) (ExtractedData, error) {
 	if err != nil && !os.IsNotExist(err) {
 		return ExtractedData{}, err
 	}
-	reduxStates, decodeSummary, err := extractIndexedDBStates(path)
+	reduxStates, decodeSummary, err := extractIndexedDBStates(ctx, path)
 	if err != nil {
 		return ExtractedData{}, err
 	}
@@ -386,7 +386,7 @@ func Ingest(ctx context.Context, st *store.Store, sourcePath string, opts Ingest
 	}
 	defer func() { _ = os.RemoveAll(filepath.Dir(snapshot.Root)) }()
 
-	extracted, err := Extract(snapshot.Root)
+	extracted, err := Extract(ctx, snapshot.Root)
 	if err != nil {
 		return Source{}, err
 	}

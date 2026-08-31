@@ -4,6 +4,8 @@
 
 ### Fixes
 
+- Stop Slack channel, history, thread, and DM pagination with a clear error when a cursor repeats instead of looping indefinitely. Thanks @SebTardif! (#159)
+- Cancel hung Slack Desktop Node decoders when stopping sync, watch, or doctor. Thanks @SebTardif! (#163)
 - Stop MCP stdio servers and unblock full stdin pipes when sync is canceled. Thanks @SebTardif! (#164)
 
 ### Maintenance
