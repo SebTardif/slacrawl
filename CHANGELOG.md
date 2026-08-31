@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- Cancel hung Slack Desktop Node decoders when stopping sync, watch, or doctor. Thanks @SebTardif! (#163)
+
 ### Maintenance
 
 - Updated Go to 1.27.0, SQLite to 1.57.0, Go runtime and test dependencies, Alpine to 3.24, pre-commit hooks to 6.0.0, and CodeQL and TruffleHog action pins.
