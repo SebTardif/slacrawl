@@ -188,6 +188,8 @@ The subprocess receives a minimal environment plus known Slack/Codex token varia
 
 Tool discovery selects either the Codex Slack connector contract or the reference `slack_list_channels`, `slack_get_channel_history`, `slack_get_thread_replies`, and `slack_get_users` contract.
 
+Ctrl-C cancels MCP sync and stops its stdio server, including when the server stops reading requests and fills the stdin pipe.
+
 ## External Archive Providers
 
 Use `[[providers]]` to adapt another local archive to the canonical SQLite

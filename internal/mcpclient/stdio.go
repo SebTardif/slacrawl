@@ -51,9 +51,12 @@ type StdioClient struct {
 	waitErr         error
 }
 
-func NewStdio(_ context.Context, opts StdioOptions) (*StdioClient, error) {
+func NewStdio(ctx context.Context, opts StdioOptions) (*StdioClient, error) {
 	if strings.TrimSpace(opts.Command) == "" {
 		return nil, errors.New("MCP stdio command is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	if opts.ProtocolVersion == "" {
 		opts.ProtocolVersion = DefaultProtocolVersion
@@ -64,7 +67,7 @@ func NewStdio(_ context.Context, opts StdioOptions) (*StdioClient, error) {
 	if opts.ClientVersion == "" {
 		opts.ClientVersion = "dev"
 	}
-	cmd := exec.Command(opts.Command, opts.Args...)
+	cmd := exec.CommandContext(ctx, opts.Command, opts.Args...)
 	cmd.Env = stdioEnvironment(opts)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -277,10 +280,31 @@ func (c *StdioClient) write(ctx context.Context, value any) error {
 	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	if _, err := c.stdin.Write(append(raw, '\n')); err != nil {
-		return fmt.Errorf("write MCP stdio request: %w", err)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	return nil
+	// Write from a goroutine so a child that stops reading stdin cannot
+	// park the caller after context cancel. Closing stdin and killing the
+	// process unblocks a full pipe, matching provider.Sync.
+	errCh := make(chan error, 1)
+	go func() {
+		_, writeErr := c.stdin.Write(append(raw, '\n'))
+		errCh <- writeErr
+	}()
+	select {
+	case <-ctx.Done():
+		_ = c.stdin.Close()
+		if c.cmd != nil && c.cmd.Process != nil {
+			_ = c.cmd.Process.Kill()
+		}
+		<-errCh
+		return ctx.Err()
+	case err := <-errCh:
+		if err != nil {
+			return fmt.Errorf("write MCP stdio request: %w", err)
+		}
+		return nil
+	}
 }
 
 func (c *StdioClient) readLoop(stdout io.Reader) {
