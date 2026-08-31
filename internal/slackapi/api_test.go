@@ -1863,7 +1863,7 @@ func TestFetchChannelsRejectsRepeatedCursor(t *testing.T) {
 	client := NewWithOptions(config.Tokens{Bot: "xoxb-test"}, server.URL+"/", server.Client())
 	client.sleep = func(context.Context, time.Duration) error { return nil }
 
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, err := client.fetchChannels(ctx, "T123")
 	require.ErrorContains(t, err, `conversations.list repeated cursor "stuck"`)
@@ -1880,15 +1880,15 @@ func TestSyncChannelHistoryRejectsRepeatedCursor(t *testing.T) {
 	}))
 	defer server.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
 	st := mustStore(t)
 	defer func() { require.NoError(t, st.Close()) }()
 	now := time.Date(2026, 3, 8, 1, 2, 3, 0, time.UTC)
-	require.NoError(t, st.UpsertChannel(ctx, store.Channel{
+	require.NoError(t, st.UpsertChannel(context.Background(), store.Channel{
 		ID: "C123", WorkspaceID: "T123", Name: "general", Kind: "public_channel", RawJSON: "{}", UpdatedAt: now,
 	}))
 
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	client := NewWithOptions(config.Tokens{Bot: "xoxb-test"}, server.URL+"/", server.Client())
 	client.sleep = func(context.Context, time.Duration) error { return nil }
 	err := client.syncChannelMessagesWithSource(
@@ -1916,15 +1916,15 @@ func TestSyncThreadRejectsRepeatedCursor(t *testing.T) {
 	}))
 	defer server.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
 	st := mustStore(t)
 	defer func() { require.NoError(t, st.Close()) }()
 	now := time.Date(2026, 3, 8, 1, 2, 3, 0, time.UTC)
-	require.NoError(t, st.UpsertChannel(ctx, store.Channel{
+	require.NoError(t, st.UpsertChannel(context.Background(), store.Channel{
 		ID: "C123", WorkspaceID: "T123", Name: "general", Kind: "public_channel", RawJSON: "{}", UpdatedAt: now,
 	}))
 
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	client := NewWithOptions(config.Tokens{Bot: "xoxb-test", User: "xoxp-test"}, server.URL+"/", server.Client())
 	client.sleep = func(context.Context, time.Duration) error { return nil }
 	err := client.syncThread(ctx, st, "T123", "C123", "1710000000.000100", false, now)

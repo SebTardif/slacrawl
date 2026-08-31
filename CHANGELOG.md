@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- Stop Slack channel, history, thread, and DM pagination with a clear error when a cursor repeats instead of looping indefinitely. Thanks @SebTardif! (#159)
+
 ## v0.8.5 - 2026-08-14
 
 ### Maintenance

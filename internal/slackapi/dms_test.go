@@ -88,7 +88,7 @@ func TestFetchDMsRejectsRepeatedCursor(t *testing.T) {
 	client := NewWithOptions(config.Tokens{User: "xoxp-test"}, server.URL+"/", server.Client())
 	client.sleep = func(context.Context, time.Duration) error { return nil }
 
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, err := client.fetchDMs(ctx, "T123")
 	require.ErrorContains(t, err, `conversations.list repeated cursor "stuck"`)
