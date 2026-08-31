@@ -120,12 +120,12 @@ func nodeAvailable() bool {
 	return err == nil
 }
 
-func ExtractIndexedDBStates(path string) ([]ReduxDecodedState, error) {
-	states, _, err := extractIndexedDBStates(path)
+func ExtractIndexedDBStates(ctx context.Context, path string) ([]ReduxDecodedState, error) {
+	states, _, err := extractIndexedDBStates(ctx, path)
 	return states, err
 }
 
-func extractIndexedDBStates(path string) ([]ReduxDecodedState, IndexedDBSummary, error) {
+func extractIndexedDBStates(ctx context.Context, path string) ([]ReduxDecodedState, IndexedDBSummary, error) {
 	refs, err := scanReduxBlobRefs(filepath.Join(path, indexedDBBlobDir))
 	if err != nil {
 		return nil, IndexedDBSummary{}, err
@@ -138,6 +138,9 @@ func extractIndexedDBStates(path string) ([]ReduxDecodedState, IndexedDBSummary,
 
 	byIdentity := map[string]ReduxDecodedState{}
 	for _, ref := range refs {
+		if err := ctx.Err(); err != nil {
+			return nil, summary, err
+		}
 		result := analyzeReduxBlob(ref.Path)
 		if !result.candidate {
 			if result.err != nil {
@@ -157,8 +160,11 @@ func extractIndexedDBStates(path string) ([]ReduxDecodedState, IndexedDBSummary,
 		if !summary.NodeAvailable {
 			continue
 		}
-		state, err := runReduxDecoder(result.payload)
+		state, err := runReduxDecoder(ctx, result.payload)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, summary, ctx.Err()
+			}
 			summary.recordDecodeFailure(decodeErrorStage(err))
 			continue
 		}
@@ -464,12 +470,12 @@ type reduxBlobDecode struct {
 
 // decodeReduxBlob analyzes a blob file and, for supported candidates, decodes
 // it with Node.
-func decodeReduxBlob(blobPath string) reduxBlobDecode {
+func decodeReduxBlob(ctx context.Context, blobPath string) reduxBlobDecode {
 	result := analyzeReduxBlob(blobPath)
 	if !result.candidate || result.err != nil {
 		return result
 	}
-	state, err := runReduxDecoder(result.payload)
+	state, err := runReduxDecoder(ctx, result.payload)
 	if err != nil {
 		result.payload = nil
 		result.err = err
@@ -563,7 +569,7 @@ func isKnownBlinkVersion(version byte) bool {
 	return version >= minWireVersionWindow && version <= maxBlinkEnvelopeVersion
 }
 
-func runReduxDecoder(payload []byte) (ReduxDecodedState, error) {
+func runReduxDecoder(ctx context.Context, payload []byte) (ReduxDecodedState, error) {
 	tempFile, err := os.CreateTemp("", "slacrawl-redux-*.bin")
 	if err != nil {
 		return ReduxDecodedState{}, newReduxDecodeError("temp", err)
@@ -578,9 +584,12 @@ func runReduxDecoder(payload []byte) (ReduxDecodedState, error) {
 		return ReduxDecodedState{}, newReduxDecodeError("temp", err)
 	}
 
-	cmd := exec.Command("node", "-e", reduxDecoderScript, tempPath) //nolint:gosec // Node decodes a temporary V8 payload copied from the Slack data directory.
+	cmd := exec.CommandContext(ctx, "node", "-e", reduxDecoderScript, tempPath) //nolint:gosec // Node decodes a temporary V8 payload copied from the Slack data directory.
 	output, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() != nil {
+			return ReduxDecodedState{}, ctx.Err()
+		}
 		return ReduxDecodedState{}, newReduxDecodeError("node", err)
 	}
 

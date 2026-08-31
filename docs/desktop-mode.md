@@ -79,6 +79,8 @@ This will:
 2. parse Local Storage and IndexedDB data
 3. merge supported rows into SQLite
 
+Ctrl-C cancels desktop sync, watch, and doctor, including a Node decoder that stops responding.
+
 ## Continuous Desktop Refresh
 
 Use `watch` to keep refreshing the DB from local desktop state:

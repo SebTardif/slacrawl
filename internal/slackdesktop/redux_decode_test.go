@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/golang/snappy"
 	"github.com/stretchr/testify/require"
@@ -89,7 +90,7 @@ func decodeFixtureBlob(t *testing.T, payload []byte) reduxBlobDecode {
 	t.Helper()
 	blobPath := filepath.Join(t.TempDir(), "redux.blob")
 	require.NoError(t, os.WriteFile(blobPath, payload, 0o600))
-	return decodeReduxBlob(blobPath)
+	return decodeReduxBlob(context.Background(), blobPath)
 }
 
 func TestDecodeReduxBlobBareV15(t *testing.T) {
@@ -181,12 +182,42 @@ func TestLocateInnerV8Payload(t *testing.T) {
 	}
 }
 
+func TestExtractIndexedDBStatesCancelsHungDecoder(t *testing.T) {
+	requireNode(t)
+
+	orig := reduxDecoderScript
+	t.Cleanup(func() { reduxDecoderScript = orig })
+	reduxDecoderScript = "setTimeout(function () {}, 1e9)"
+
+	root := t.TempDir()
+	writeBlob(t, root, "hang-a", serializeReduxFixture(t, "T111", "U111"))
+	writeBlob(t, root, "hang-b", serializeReduxFixture(t, "T222", "U222"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := extractIndexedDBStates(ctx, root)
+		done <- err
+	}()
+
+	time.Sleep(80 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(2 * time.Second):
+		t.Fatal("extractIndexedDBStates ignored context cancel for a hung node decoder")
+	}
+}
+
 func TestExtractIndexedDBStatesMixedV15AndV16(t *testing.T) {
 	root := t.TempDir()
 	writeBlob(t, root, "v15", serializeReduxFixture(t, "T111", "U111"))
 	writeBlob(t, root, "v16", snappyWrap(blink21Wrap(asWireFormatV16(serializeReduxFixture(t, "T222", "U222")))))
 
-	states, summary, err := extractIndexedDBStates(root)
+	states, summary, err := extractIndexedDBStates(context.Background(), root)
 	require.NoError(t, err)
 	require.Len(t, states, 2)
 	require.Equal(t, "T111", states[0].WorkspaceID)
@@ -207,7 +238,7 @@ func TestExtractIndexedDBStatesRetainsValidStatesWhenACandidateIsCorrupt(t *test
 	// Recognized V8 v15 header with a truncated payload: node must reject it.
 	writeBlob(t, root, "truncated", []byte{0xff, v8WireFormatV15, 0x6f})
 
-	states, summary, err := extractIndexedDBStates(root)
+	states, summary, err := extractIndexedDBStates(context.Background(), root)
 	require.NoError(t, err)
 	require.Len(t, states, 1)
 	require.Equal(t, "T111", states[0].WorkspaceID)
@@ -224,7 +255,7 @@ func TestExtractIndexedDBStatesIgnoresUnrelatedBlobFiles(t *testing.T) {
 	writeBlob(t, root, "valid", serializeReduxFixture(t, "T111", "U111"))
 	writeBlob(t, root, "unrelated", []byte("exported attachment bytes, not a redux state"))
 
-	states, summary, err := extractIndexedDBStates(root)
+	states, summary, err := extractIndexedDBStates(context.Background(), root)
 	require.NoError(t, err)
 	require.Len(t, states, 1)
 	require.Equal(t, 2, summary.BlobFileCount)
@@ -241,7 +272,7 @@ func TestExtractIndexedDBStatesUnreadableFileIsNotACandidate(t *testing.T) {
 	require.NoError(t, os.Chmod(unreadable, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(unreadable, 0o600) })
 
-	states, summary, err := extractIndexedDBStates(root)
+	states, summary, err := extractIndexedDBStates(context.Background(), root)
 	require.NoError(t, err)
 	require.Len(t, states, 1)
 	require.Equal(t, 2, summary.BlobFileCount)
@@ -255,7 +286,7 @@ func TestExtractIndexedDBStatesNoCandidatesIsSuccessful(t *testing.T) {
 	root := t.TempDir()
 	writeBlob(t, root, "unrelated", []byte("not a redux blob"))
 
-	states, summary, err := extractIndexedDBStates(root)
+	states, summary, err := extractIndexedDBStates(context.Background(), root)
 	require.NoError(t, err)
 	require.Empty(t, states)
 	require.Equal(t, 1, summary.BlobFileCount)
@@ -267,7 +298,7 @@ func TestExtractIndexedDBStatesClassifiesMalformedSnappy(t *testing.T) {
 	root := t.TempDir()
 	writeBlob(t, root, "malformed", append([]byte{0xff, 0x11, 0x02}, []byte("%%%not-snappy%%%")...))
 
-	states, summary, err := extractIndexedDBStates(root)
+	states, summary, err := extractIndexedDBStates(context.Background(), root)
 	require.NoError(t, err)
 	require.Empty(t, states)
 	require.Equal(t, 1, summary.CandidateCount)
@@ -279,7 +310,7 @@ func TestExtractIndexedDBStatesReportsUnsupportedVersion(t *testing.T) {
 	root := t.TempDir()
 	writeBlob(t, root, "future", []byte{0xff, 17, 0x6f, 0x7b})
 
-	states, summary, err := extractIndexedDBStates(root)
+	states, summary, err := extractIndexedDBStates(context.Background(), root)
 	require.NoError(t, err)
 	require.Empty(t, states)
 	require.Equal(t, 1, summary.CandidateCount)
@@ -293,7 +324,7 @@ func TestExtractIndexedDBStatesNodeUnavailable(t *testing.T) {
 	root := t.TempDir()
 	writeBlob(t, root, "v15", []byte{0xff, v8WireFormatV15, 0x6f})
 
-	states, summary, err := extractIndexedDBStates(root)
+	states, summary, err := extractIndexedDBStates(context.Background(), root)
 	require.NoError(t, err)
 	require.Empty(t, states)
 	require.False(t, summary.NodeAvailable)
@@ -310,7 +341,7 @@ func TestInspectReportsAllCandidateFailureWithoutError(t *testing.T) {
 	root := t.TempDir()
 	writeBlob(t, root, "truncated", []byte{0xff, v8WireFormatV15, 0x6f})
 
-	source, err := Inspect(root)
+	source, err := Inspect(context.Background(), root)
 	require.NoError(t, err)
 	require.True(t, source.IndexedDB.NodeAvailable)
 	require.Equal(t, 1, source.IndexedDB.BlobFileCount)
@@ -368,7 +399,7 @@ func TestDoctorJSONIncludesIndexedDBDiagnostics(t *testing.T) {
 	root := t.TempDir()
 	writeBlob(t, root, "malformed", append([]byte{0xff, 0x11, 0x02}, []byte("supersecretpayload")...))
 
-	source, err := Inspect(root)
+	source, err := Inspect(context.Background(), root)
 	require.NoError(t, err)
 
 	rendered, err := json.Marshal(source)
