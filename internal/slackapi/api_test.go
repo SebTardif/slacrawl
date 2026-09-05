@@ -1931,3 +1931,53 @@ func TestSyncThreadRejectsRepeatedCursor(t *testing.T) {
 	require.ErrorContains(t, err, `conversations.replies repeated cursor "stuck"`)
 	require.Equal(t, 2, calls)
 }
+
+func TestGetUsersRejectsRepeatedCursor(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/users.list", r.URL.Path)
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"members":[{"id":"U123","name":"alice"}],"response_metadata":{"next_cursor":"stuck"}}`))
+	}))
+	defer server.Close()
+
+	client := NewWithOptions(config.Tokens{Bot: "xoxb-test"}, server.URL+"/", server.Client())
+	client.sleep = func(context.Context, time.Duration) error { return nil }
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := client.getUsers(ctx, client.bot)
+	require.ErrorContains(t, err, `users.list repeated cursor "stuck"`)
+	require.Equal(t, 2, calls)
+	t.Logf("getUsers stuck next_cursor: %v", err)
+}
+
+func TestGetUsersWalksDistinctCursors(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/users.list", r.URL.Path)
+		calls++
+		cursor := mustFormValues(r).Get("cursor")
+		w.Header().Set("Content-Type", "application/json")
+		switch cursor {
+		case "":
+			_, _ = w.Write([]byte(`{"ok":true,"members":[{"id":"U1","name":"alice"}],"response_metadata":{"next_cursor":"page2"}}`))
+		case "page2":
+			_, _ = w.Write([]byte(`{"ok":true,"members":[{"id":"U2","name":"bob"}],"response_metadata":{"next_cursor":""}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewWithOptions(config.Tokens{Bot: "xoxb-test"}, server.URL+"/", server.Client())
+	client.sleep = func(context.Context, time.Duration) error { return nil }
+
+	users, err := client.getUsers(context.Background(), client.bot)
+	require.NoError(t, err)
+	require.Len(t, users, 2)
+	require.Equal(t, "U1", users[0].ID)
+	require.Equal(t, "U2", users[1].ID)
+	require.Equal(t, 2, calls)
+}
