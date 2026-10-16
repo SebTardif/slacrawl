@@ -151,7 +151,7 @@ func normalizeChannelKind(kind string) string {
 	}
 }
 
-func reorderFlagsBeforePositionals(args []string, valueFlags map[string]bool) []string {
+func reorderFlagsBeforePositionals(args []string, valueFlags map[string]bool) ([]string, error) {
 	// Keep the original leading options, including --help and -h, so FlagSet
 	// still decides help before it consumes a later value. Only value flags
 	// that follow a positional move forward.
@@ -179,17 +179,22 @@ func reorderFlagsBeforePositionals(args []string, valueFlags map[string]bool) []
 			positionals = append(positionals, arg)
 			continue
 		}
-		if valueFlags[flagName(arg)] {
-			hoisted = append(hoisted, arg)
-			if !strings.Contains(arg, "=") && i+1 < len(args) {
-				i++
-				hoisted = append(hoisted, args[i])
+		name := flagName(arg)
+		if valueFlags[name] {
+			if strings.Contains(arg, "=") {
+				hoisted = append(hoisted, arg)
+				continue
 			}
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("flag needs an argument: -%s", name)
+			}
+			i++
+			hoisted = append(hoisted, arg, args[i])
 			continue
 		}
 		positionals = append(positionals, arg)
 	}
-	return append(append(leading, hoisted...), positionals...)
+	return append(append(leading, hoisted...), positionals...), nil
 }
 
 func flagName(arg string) string {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -64,6 +65,21 @@ func TestUsersAndChannelsHonorFlagsAfterTheQuery(t *testing.T) {
 	require.Len(t, generalOnT1, 1)
 	require.Equal(t, "T1", generalOnT1[0]["workspace_id"])
 	require.Equal(t, "C1", generalOnT1[0]["id"])
+
+	for _, args := range [][]string{
+		{"users", "alice", "--workspace"},
+		{"users", "5", "--limit"},
+		{"channels", "general", "--workspace"},
+		{"channels", "general", "--kind"},
+	} {
+		var stdout bytes.Buffer
+		app.Stdout = &stdout
+		app.Stderr = &stdout
+		err := app.Run(context.Background(), append([]string{"--config", configPath}, args...))
+		require.ErrorContains(t, err, "flag needs an argument: -"+strings.TrimLeft(args[len(args)-1], "-"))
+		require.NotContains(t, stdout.String(), "alice")
+		require.NotContains(t, stdout.String(), "bob")
+	}
 }
 
 func TestLeadingHelpWinsBeforeAValueFlag(t *testing.T) {
