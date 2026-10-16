@@ -152,8 +152,14 @@ func normalizeChannelKind(kind string) string {
 }
 
 func hasHelpArg(args []string) bool {
+	if len(args) == 1 && args[0] == "help" {
+		return true
+	}
 	for _, arg := range args {
-		if arg == "help" || arg == "--help" || arg == "-h" {
+		if arg == "--" {
+			return false
+		}
+		if arg == "-h" || arg == "--help" {
 			return true
 		}
 	}
