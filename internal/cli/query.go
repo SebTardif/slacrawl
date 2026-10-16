@@ -204,7 +204,10 @@ func (a *App) runUsers(ctx context.Context, configPath string, args []string, fo
 	fs := flag.NewFlagSet("users", flag.ContinueOnError)
 	workspaceID := fs.String("workspace", "", "workspace id")
 	limit := fs.Int("limit", 100, "row limit")
-	if err := a.parseCommandFlags(fs, args); err != nil {
+	if err := a.parseCommandFlags(fs, reorderFlagsBeforePositionals(args, map[string]bool{
+		"workspace": true,
+		"limit":     true,
+	})); err != nil {
 		return err
 	}
 	if configErr != nil {
@@ -238,7 +241,11 @@ func (a *App) runChannels(ctx context.Context, configPath string, args []string,
 	workspaceID := fs.String("workspace", "", "workspace id")
 	kind := fs.String("kind", "", "channel kind")
 	limit := fs.Int("limit", 100, "row limit")
-	if err := a.parseCommandFlags(fs, args); err != nil {
+	if err := a.parseCommandFlags(fs, reorderFlagsBeforePositionals(args, map[string]bool{
+		"workspace": true,
+		"kind":      true,
+		"limit":     true,
+	})); err != nil {
 		return err
 	}
 	if configErr != nil {
