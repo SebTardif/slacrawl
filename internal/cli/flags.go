@@ -152,33 +152,52 @@ func normalizeChannelKind(kind string) string {
 }
 
 func reorderFlagsBeforePositionals(args []string, valueFlags map[string]bool) []string {
-	flags := make([]string, 0, len(args))
+	// Keep the original leading options, including --help and -h, so FlagSet
+	// still decides help before it consumes a later value. Only value flags
+	// that follow a positional move forward.
+	leading := make([]string, 0, len(args))
+	hoisted := make([]string, 0, len(args))
 	positionals := make([]string, 0, len(args))
+	seenPositional := false
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
 			positionals = append(positionals, args[i:]...)
 			break
 		}
-		if arg == "-" || !strings.HasPrefix(arg, "-") {
+		isFlag := arg != "-" && strings.HasPrefix(arg, "-")
+		if !seenPositional && isFlag {
+			leading = append(leading, arg)
+			if valueFlags[flagName(arg)] && !strings.Contains(arg, "=") && i+1 < len(args) {
+				i++
+				leading = append(leading, args[i])
+			}
+			continue
+		}
+		if !isFlag {
+			seenPositional = true
 			positionals = append(positionals, arg)
 			continue
 		}
-		name := strings.TrimLeft(arg, "-")
-		if key, _, ok := strings.Cut(name, "="); ok {
-			name = key
-		}
-		if _, known := valueFlags[name]; !known {
-			positionals = append(positionals, arg)
+		if valueFlags[flagName(arg)] {
+			hoisted = append(hoisted, arg)
+			if !strings.Contains(arg, "=") && i+1 < len(args) {
+				i++
+				hoisted = append(hoisted, args[i])
+			}
 			continue
 		}
-		flags = append(flags, arg)
-		if !strings.Contains(arg, "=") && i+1 < len(args) {
-			i++
-			flags = append(flags, args[i])
-		}
+		positionals = append(positionals, arg)
 	}
-	return append(flags, positionals...)
+	return append(append(leading, hoisted...), positionals...)
+}
+
+func flagName(arg string) string {
+	name := strings.TrimLeft(arg, "-")
+	if key, _, ok := strings.Cut(name, "="); ok {
+		return key
+	}
+	return name
 }
 
 func hasHelpArg(args []string) bool {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -63,6 +64,27 @@ func TestUsersAndChannelsHonorFlagsAfterTheQuery(t *testing.T) {
 	require.Len(t, generalOnT1, 1)
 	require.Equal(t, "T1", generalOnT1[0]["workspace_id"])
 	require.Equal(t, "C1", generalOnT1[0]["id"])
+}
+
+func TestLeadingHelpWinsBeforeAValueFlag(t *testing.T) {
+	t.Setenv("SLACRAWL_NO_UPDATE_CHECK", "1")
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(configPath, []byte("this is not valid TOML"), 0o600))
+	for _, args := range [][]string{
+		{"users", "--help", "--workspace"},
+		{"users", "-h", "--limit"},
+		{"channels", "--help", "--kind"},
+		{"channels", "-h", "--workspace"},
+	} {
+		t.Run(args[0]+"/"+args[1], func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			app := &App{Stdout: &stdout, Stderr: &stderr}
+			err := app.Run(context.Background(), append([]string{"--config", configPath}, args...))
+			require.NoError(t, err)
+			require.Contains(t, stdout.String(), "Usage of "+args[0]+":")
+			require.Empty(t, stderr.String())
+		})
+	}
 }
 
 func runJSONRows(t *testing.T, app *App, args ...string) []map[string]any {
