@@ -159,6 +159,7 @@ func reorderFlagsBeforePositionals(args []string, valueFlags map[string]bool) ([
 	hoisted := make([]string, 0, len(args))
 	positionals := make([]string, 0, len(args))
 	seenPositional := false
+	sawHelp := false
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
@@ -168,6 +169,9 @@ func reorderFlagsBeforePositionals(args []string, valueFlags map[string]bool) ([
 		isFlag := arg != "-" && strings.HasPrefix(arg, "-")
 		if !seenPositional && isFlag {
 			leading = append(leading, arg)
+			if arg == "-h" || arg == "--help" {
+				sawHelp = true
+			}
 			if valueFlags[flagName(arg)] && !strings.Contains(arg, "=") && i+1 < len(args) {
 				i++
 				leading = append(leading, args[i])
@@ -186,6 +190,10 @@ func reorderFlagsBeforePositionals(args []string, valueFlags map[string]bool) ([
 				continue
 			}
 			if i+1 >= len(args) {
+				if sawHelp {
+					positionals = append(positionals, arg)
+					continue
+				}
 				return nil, fmt.Errorf("flag needs an argument: -%s", name)
 			}
 			i++

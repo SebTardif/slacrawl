@@ -82,6 +82,50 @@ func TestUsersAndChannelsHonorFlagsAfterTheQuery(t *testing.T) {
 	}
 }
 
+func TestLeadingHelpWinsBeforeAnIncompleteTrailingFlag(t *testing.T) {
+	t.Setenv("SLACRAWL_NO_UPDATE_CHECK", "1")
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	dbPath := filepath.Join(dir, "slacrawl.db")
+	cfg := config.Default()
+	cfg.DBPath = dbPath
+	cfg.CacheDir = filepath.Join(dir, "cache")
+	cfg.WorkspaceID = "T1"
+	cfg.Share.Remote = ""
+	cfg.Share.AutoUpdate = false
+	cfg.Slack.Bot.Enabled = false
+	cfg.Slack.App.Enabled = false
+	cfg.Slack.User.Enabled = false
+	cfg.Slack.Desktop.Enabled = false
+	require.NoError(t, cfg.Save(configPath))
+	ctx := context.Background()
+	st, err := store.Open(dbPath)
+	require.NoError(t, err)
+	now := mustTime(t, "2026-03-08T18:20:43Z")
+	require.NoError(t, st.UpsertWorkspace(ctx, store.Workspace{ID: "T1", Name: "one", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, st.UpsertUser(ctx, store.User{ID: "U1", WorkspaceID: "T1", Name: "alice", RawJSON: "{}", UpdatedAt: now}))
+	require.NoError(t, st.Close())
+
+	for _, args := range [][]string{
+		{"users", "--help", "alice", "--workspace"},
+		{"channels", "--help", "general", "--kind"},
+	} {
+		t.Run(args[0], func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			app := &App{Stdout: &stdout, Stderr: &stderr}
+			err := app.Run(ctx, append([]string{"--config", configPath}, args...))
+			require.NoError(t, err)
+			require.Contains(t, stdout.String(), "Usage of "+args[0]+":")
+			require.Empty(t, stderr.String())
+		})
+	}
+
+	var stdout bytes.Buffer
+	app := &App{Stdout: &stdout, Stderr: &stdout}
+	err = app.Run(ctx, []string{"--config", configPath, "users", "alice", "--workspace"})
+	require.ErrorContains(t, err, "flag needs an argument: -workspace")
+}
+
 func TestLeadingHelpWinsBeforeAValueFlag(t *testing.T) {
 	t.Setenv("SLACRAWL_NO_UPDATE_CHECK", "1")
 	configPath := filepath.Join(t.TempDir(), "config.toml")
