@@ -122,8 +122,8 @@ func (a *App) runSubscribe(ctx context.Context, configPath string, args []string
 	if strings.TrimSpace(*remote) == "" {
 		return errors.New("subscribe requires a remote")
 	}
-	if _, err := time.ParseDuration(*staleAfter); err != nil {
-		return fmt.Errorf("invalid share.stale_after: %w", err)
+	if err := rejectUnparseableStaleAfter(*staleAfter); err != nil {
+		return err
 	}
 	policy := admission.FromConfig(cfg.Sync.IncludeDMs)
 	if !*noImport {
@@ -182,6 +182,17 @@ func (a *App) runSubscribe(ctx context.Context, configPath string, args []string
 		"media":        manifest.Media,
 		"imported":     imported,
 	}, format, true)
+}
+
+func rejectUnparseableStaleAfter(value string) error {
+	if _, err := time.ParseDuration(value); err != nil {
+		hint := "15m or 2h"
+		if strings.Contains(err.Error(), `unit "d"`) {
+			hint = "2160h for 90 days"
+		}
+		return fmt.Errorf("invalid --stale-after %q: use a duration such as %s: %w", value, hint, err)
+	}
+	return nil
 }
 
 func (a *App) runUpdate(ctx context.Context, configPath string, args []string, format OutputFormat) error {
