@@ -37,6 +37,9 @@ func (a *App) runPublish(ctx context.Context, configPath string, args []string, 
 	if *noCommit && strings.TrimSpace(*tag) != "" {
 		return errors.New("publish --tag requires a commit")
 	}
+	if *noCommit && *push {
+		return errors.New("publish --push requires a commit")
+	}
 	policy := admission.FromConfig(cfg.Sync.IncludeDMs)
 	if err := share.ValidateExportPolicy(policy); err != nil {
 		return err
