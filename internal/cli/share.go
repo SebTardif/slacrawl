@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/openclaw/slacrawl/internal/admission"
 	"github.com/openclaw/slacrawl/internal/config"
@@ -119,6 +121,9 @@ func (a *App) runSubscribe(ctx context.Context, configPath string, args []string
 	}
 	if strings.TrimSpace(*remote) == "" {
 		return errors.New("subscribe requires a remote")
+	}
+	if _, err := time.ParseDuration(*staleAfter); err != nil {
+		return fmt.Errorf("invalid share.stale_after: %w", err)
 	}
 	policy := admission.FromConfig(cfg.Sync.IncludeDMs)
 	if !*noImport {
