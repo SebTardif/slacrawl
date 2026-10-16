@@ -169,7 +169,8 @@ func reorderFlagsBeforePositionals(args []string, valueFlags map[string]bool) ([
 		isFlag := arg != "-" && strings.HasPrefix(arg, "-")
 		if !seenPositional && isFlag {
 			leading = append(leading, arg)
-			if arg == "-h" || arg == "--help" {
+			switch flagName(arg) {
+			case "h", "help":
 				sawHelp = true
 			}
 			if valueFlags[flagName(arg)] && !strings.Contains(arg, "=") && i+1 < len(args) {

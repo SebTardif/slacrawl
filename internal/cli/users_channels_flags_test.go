@@ -108,7 +108,10 @@ func TestLeadingHelpWinsBeforeAnIncompleteTrailingFlag(t *testing.T) {
 
 	for _, args := range [][]string{
 		{"users", "--help", "alice", "--workspace"},
+		{"users", "-help", "alice", "--workspace"},
+		{"users", "--h", "alice", "--limit"},
 		{"channels", "--help", "general", "--kind"},
+		{"channels", "-help", "general", "--kind"},
 	} {
 		t.Run(args[0], func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -124,6 +127,12 @@ func TestLeadingHelpWinsBeforeAnIncompleteTrailingFlag(t *testing.T) {
 	app := &App{Stdout: &stdout, Stderr: &stdout}
 	err = app.Run(ctx, []string{"--config", configPath, "users", "alice", "--workspace"})
 	require.ErrorContains(t, err, "flag needs an argument: -workspace")
+
+	stdout.Reset()
+	err = app.Run(ctx, []string{"--config", configPath, "--json", "users", "--workspace", "-help"})
+	require.NoError(t, err)
+	require.NotContains(t, stdout.String(), "Usage of users:")
+	require.NotContains(t, stdout.String(), "alice")
 }
 
 func TestLeadingHelpWinsBeforeAValueFlag(t *testing.T) {
