@@ -156,7 +156,7 @@ func (a *App) runSQL(ctx context.Context, configPath string, args []string, form
 	}
 	query := strings.TrimSpace(strings.Join(parsed.Query, " "))
 	if query == "" {
-		data, err := io.ReadAll(os.Stdin)
+		data, err := readAllContext(ctx, os.Stdin)
 		if err != nil {
 			return err
 		}
@@ -265,6 +265,30 @@ func (a *App) runChannels(ctx context.Context, configPath string, args []string,
 		return err
 	}
 	return a.writeOutput("Channels", results, format, false)
+}
+
+func readAllContext(ctx context.Context, r io.Reader) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	type result struct {
+		data []byte
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		data, err := io.ReadAll(r)
+		done <- result{data: data, err: err}
+	}()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case res := <-done:
+		if res.err != nil {
+			return nil, res.err
+		}
+		return res.data, nil
+	}
 }
 
 func printSearchUsage(w io.Writer) {
