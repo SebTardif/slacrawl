@@ -140,10 +140,10 @@ func (a *App) runSubscribe(ctx context.Context, configPath string, args []string
 	cfg.Slack.User.Enabled = false
 	cfg.Slack.Desktop.Enabled = false
 	cfg.Slack.Desktop.Path = ""
-	if err := cfg.Save(configPath); err != nil {
-		return err
-	}
 	if *noImport {
+		if err := cfg.Save(configPath); err != nil {
+			return err
+		}
 		return a.writeOutput("Subscribe", map[string]any{
 			"config_path": configPath,
 			"repo_path":   cfg.Share.RepoPath,
@@ -151,11 +151,6 @@ func (a *App) runSubscribe(ctx context.Context, configPath string, args []string
 		}, format, true)
 	}
 
-	st, err := a.openStore(cfg)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = st.Close() }()
 	opts, err := shareOptions(cfg.Share.RepoPath, cfg.Share.Remote, cfg.Share.Branch, cfg.CacheDir, !*noMedia)
 	if err != nil {
 		return err
@@ -164,8 +159,16 @@ func (a *App) runSubscribe(ctx context.Context, configPath string, args []string
 	if err := share.Pull(ctx, opts); err != nil {
 		return err
 	}
+	st, err := a.openStore(cfg)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = st.Close() }()
 	manifest, imported, err := share.ImportIfChanged(ctx, st, opts)
 	if err != nil {
+		return err
+	}
+	if err := cfg.Save(configPath); err != nil {
 		return err
 	}
 	return a.writeOutput("Subscribe", map[string]any{
